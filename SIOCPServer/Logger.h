@@ -16,6 +16,13 @@ inline void logPrint(int _nLevel, const char* _pszFunction, int _nLine, const ch
 		"[ERROR]"
 	};
 
+#ifdef NDEBUG
+	if(_nLevel == LOGLEVEL_DEBUG)
+	{
+		return;
+	}
+#endif
+
 	char szLogBuffer[512];
 	szLogBuffer[0] = 0;
 	szLogBuffer[sizeof(szLogBuffer) / sizeof(szLogBuffer[0]) - 1] = 0;

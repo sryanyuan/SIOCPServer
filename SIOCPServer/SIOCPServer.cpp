@@ -26,6 +26,7 @@ SIOCPServer::SIOCPServer()
 	InitializeCriticalSection(&m_stAcceptEventLock);
 	InitializeCriticalSection(&m_stDisconnectEventLock);
 	InitializeCriticalSection(&m_stRecvEventLock);
+	InitializeCriticalSection(&m_stSendEventLock);
 }
 
 SIOCPServer::~SIOCPServer()
@@ -33,6 +34,7 @@ SIOCPServer::~SIOCPServer()
 	DeleteCriticalSection(&m_stAcceptEventLock);
 	DeleteCriticalSection(&m_stDisconnectEventLock);
 	DeleteCriticalSection(&m_stRecvEventLock);
+	DeleteCriticalSection(&m_stSendEventLock);
 }
 
 
@@ -131,6 +133,20 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 	return 0;
 }
 
+bool SIOCPServer::Send(unsigned int _uIndex, const char* _pData, size_t _uLength)
+{
+	SIOCPConn* pConn = GetConn(_uIndex);
+	if(NULL == pConn)
+	{
+		return false;
+	}
+	if(pConn->GetConnStatus() != kSIOCPConnStatus_Connected)
+	{
+		return false;
+	}
+	return pConn->Send(_pData, _uLength);
+}
+
 void SIOCPServer::SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv)
 {
 	m_fnOnAcceptUser = _fnOnAccept;
@@ -196,6 +212,52 @@ void SIOCPServer::UnlockRecvEventQueue()
 	LeaveCriticalSection(&m_stRecvEventLock);
 }
 
+void SIOCPServer::LockSendEventQueue()
+{
+	EnterCriticalSection(&m_stSendEventLock);
+}
+
+void SIOCPServer::UnlockSendEventQueue()
+{
+	LeaveCriticalSection(&m_stSendEventLock);
+}
+
+void SIOCPServer::PushEvent(SIOCPThreadEventType _eType, void* _pEvt)
+{
+	switch (_eType)
+	{
+	case kSIOCPThreadEvent_Accept:
+		{
+			LockAcceptEventQueue();
+			m_xAcceptEventQueue.push_back(_pEvt);
+			UnlockAcceptEventQueue();
+		}
+		break;
+	case kSIOCPThreadEvent_Disconnect:
+		{
+			LockDisconnectEventQueue();
+			m_xDisconnectEventQueue.push_back(_pEvt);
+			UnlockDisconnectEventQueue();
+		}
+		break;
+	case kSIOCPThreadEvent_Recv:
+		{
+			LockRecvEventQueue();
+			m_xRecvEventQueue.push_back(_pEvt);
+			UnlockRecvEventQueue();
+		}
+		break;
+	case KSIOCPThreadEvent_Send:
+		break;
+	case kSIOCPThreadEvent_Total:
+		break;
+	default:
+		break;
+	}
+
+	EventAwake(_eType);
+}
+
 void SIOCPServer::EventAwake(SIOCPThreadEventType _eType)
 {
 	HANDLE hEvent = m_hEvents[_eType];
@@ -236,4 +298,98 @@ void SIOCPServer::PostDisconnectEvent(SIOCPServer* _pServer, unsigned int _uInde
 	key.SetAction(kSIOCPCompletionAction_Disconnect);
 
 	PostQueuedCompletionStatus(_pServer->m_hCompletionPort, 0, key.GetData(), NULL);
+}
+
+
+
+void SIOCPServer::__closeConnection(SIOCPConn* _pConn)
+{
+	SIOCPServer* pServer = _pConn->GetServer();
+	if(NULL == pServer)
+	{
+		LOGERROR("Conn belongs no server");
+		return;
+	}
+
+	pServer->Callback_OnDisconnectUser(_pConn->GetConnIndex());
+
+	_pConn->SetConnStatus(kSIOCPConnStatus_Disconnected);
+	_pConn->SetSocket(INVALID_SOCKET);
+	pServer->SetConn(_pConn->GetConnIndex(), NULL);
+	pServer->m_xIndexGenerator.Push(_pConn->GetConnIndex());
+	closesocket(_pConn->GetSocket());
+	//delete _pConn;
+	SIOCPConnPool::GetInstance()->FreeConnection(_pConn);
+}
+
+bool SIOCPServer::__unpackPacket(SIOCPConn* _pConn)
+{
+	SIOCPServer* pServer = _pConn->GetServer();
+	if(NULL == pServer)
+	{
+		LOGERROR("Conn belongs no server");
+		return false;
+	}
+
+	//	move buffer pointer
+	SIOCPOverlapped* pOl = _pConn->GetOverlappedRecv();
+	pOl->m_xRecvBuffer.MoveDataOffset(int(pOl->m_dwNumOfBytesRecvd));
+
+	//	unpack packet
+	const char* pHead = pOl->m_xRecvBuffer.GetReadableBufferPtr();
+	size_t uReadableLength = pOl->m_xRecvBuffer.GetReadableSize();
+
+	if(uReadableLength < PACKET_HEADER_LENGTH)
+	{
+		//	can't unpack, wait for next read
+		return true;
+	}
+
+	//	read packet length
+	unsigned int uPacketLength = 0;
+
+	while(1)
+	{
+		memcpy(&uPacketLength, pHead, PACKET_HEADER_LENGTH);
+		uPacketLength = ntohl(uPacketLength);
+
+		if(uPacketLength <= PACKET_HEADER_LENGTH)
+		{
+			//	invalid packet
+			return false;
+		}
+
+		//	can read full packet?
+		if(uReadableLength >= uPacketLength)
+		{
+			//	full packet read
+			pServer->Callback_OnRecvFromUser(_pConn->GetConnIndex(), pHead, uPacketLength - 4);
+
+			//	move read pointer
+			uReadableLength -= uPacketLength;
+			pOl->m_xRecvBuffer.Read(NULL, uPacketLength);
+			pHead += uPacketLength;
+		}
+		else
+		{
+			//	can't read packet
+			break;
+		}
+
+		//	check left length
+		if(uReadableLength < PACKET_HEADER_LENGTH)
+		{
+			break;
+		}
+	}
+
+	//	reset the recv buffer
+	size_t uReadOffset = pOl->m_xRecvBuffer.GetReadOffset();
+	if(0 != uReadOffset)
+	{
+		//	memmove buffer
+		pOl->m_xRecvBuffer.BackwardMove(uReadOffset);
+	}
+
+	return true;
 }

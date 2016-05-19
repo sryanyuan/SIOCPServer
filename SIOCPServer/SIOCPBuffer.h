@@ -131,6 +131,42 @@ public:
 		m_uDataLength = _uLength;
 	}
 
+	void MoveReadOffset(int _nOffset)
+	{
+		int nOffset = (int)m_uReadOffset + _nOffset;
+		m_uReadOffset = (size_t)nOffset;
+	}
+
+	void MoveDataOffset(int _nOffset)
+	{
+		int nOffset = (int)m_uDataLength + _nOffset;
+		m_uDataLength = (size_t)nOffset;
+	}
+
+	size_t GetReadOffset()
+	{
+		return m_uReadOffset;
+	}
+
+	/*
+		move the buffer, move the read offset
+	*/
+	void BackwardMove(size_t _uSize)
+	{
+		if(0 == _uSize)
+		{
+			return;
+		}
+		if(_uSize > m_uReadOffset)
+		{
+			return;
+		}
+
+		memmove(m_pBuffer + m_uReadOffset - _uSize, m_pBuffer + m_uReadOffset, GetReadableSize());
+		m_uReadOffset -= _uSize;
+		m_uDataLength -= _uSize;
+	}
+
 private:
 	char* m_pBuffer;
 	size_t m_uBufferLen;

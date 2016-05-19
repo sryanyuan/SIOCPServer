@@ -41,8 +41,16 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 
 		if(FALSE == GetQueuedCompletionStatus(pServer->m_hCompletionPort, &dwNumOfBytesTransferred, (DWORD*)&stCompletionKey, &pOverlapped, INFINITE))
 		{
-			LOGERROR("Get queued completion status failed.");
-			continue;
+			int nErr = WSAGetLastError();
+			if(nErr != ERROR_NETNAME_DELETED)
+			{
+				LOGERROR("Get queued completion status failed.Error %d", nErr);
+				continue;
+			}
+			else
+			{
+				LOGDEBUG("ERROR_NETNAME_DELETED");
+			}
 		}
 
 		if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Disconnect ||
@@ -51,17 +59,61 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 			//	process disconnect
 			unsigned short uConnIndex = stCompletionKey.GetIndex();
 			//	push event
-			pServer->LockDisconnectEventQueue();
-			pServer->m_xDisconnectEventQueue.push_back((void*)uConnIndex);
-			pServer->UnlockDisconnectEventQueue();
-			pServer->EventAwake(kSIOCPThreadEvent_Disconnect);
-
+			pServer->PushEvent(kSIOCPThreadEvent_Disconnect, (void*)uConnIndex);
 			continue;
 		}
 		else if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Destory)
 		{
 			LOGINFO("Destory completion worker thread");
 			break;
+		}
+
+		SIOCPOverlapped* pIO = (SIOCPOverlapped*)pOverlapped;
+		if(NULL == pIO)
+		{
+			continue;
+		}
+
+		if(pIO->m_nOverlappedMode == OVERLAPPED_MODE_READ)
+		{
+			//	get read status, post to process thread
+			unsigned short uConnIndex = stCompletionKey.GetIndex();
+			pIO->m_dwNumOfBytesRecvd = dwNumOfBytesTransferred;
+			//	push event
+			pServer->PushEvent(kSIOCPThreadEvent_Recv, (void*)stCompletionKey.GetData());
+		}
+		else if(pIO->m_nOverlappedMode == OVERLAPPED_MODE_WRITE)
+		{
+			//	get write status
+			unsigned short uConnIndex = stCompletionKey.GetIndex();
+			pIO->m_dwNumOfBytesSent = dwNumOfBytesTransferred;
+
+			//	next send
+			pIO->LockSend();
+
+			SIOCPBuffer& refBuffer = pIO->m_xSendBuffer;
+			refBuffer.Read(NULL, dwNumOfBytesTransferred);
+
+			//	move data?
+			if(refBuffer.GetReadOffset() >= 2 * refBuffer.GetBufferSize() / 3)
+			{
+				refBuffer.BackwardMove(refBuffer.GetReadOffset());
+			}
+
+			//	next read
+			if(refBuffer.GetReadableSize() > 0)
+			{
+				if(!pIO->SendBuffer())
+				{
+					SIOCPServer::PostDisconnectEvent(pServer, pIO->m_pConn->GetConnIndex());
+				}
+			}
+			else
+			{
+				pIO->m_bSending = false;
+			}
+
+			pIO->UnlockSend();
 		}
 	}
 
@@ -101,7 +153,8 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 				}
 				else
 				{
-					SIOCPConn* pConn = new SIOCPConn;
+					//SIOCPConn* pConn = new SIOCPConn;
+					SIOCPConn* pConn = SIOCPConnPool::GetInstance()->GetConnection();
 					pConn->SetConnIndex(uIndex);
 					pConn->SetServer(pServer);
 					pConn->SetConnStatus(kSIOCPConnStatus_Connected);
@@ -123,6 +176,7 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 					}
 					else
 					{
+						LOGDEBUG("Accept new connection %d", pConn->GetConnIndex());
 						//	prepare for read
 						pConn->PreRecv();
 					}
@@ -131,7 +185,7 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 			pServer->m_xAcceptEventQueue.clear();
 			pServer->UnlockAcceptEventQueue();
 		}
-		else if(dwActiveEvent == kSIOCPCompletionAction_Disconnect)
+		else if(dwActiveEvent == kSIOCPThreadEvent_Disconnect)
 		{
 			//	disconnect socket
 			pServer->LockDisconnectEventQueue();
@@ -151,18 +205,55 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 				}
 				else
 				{
-					pServer->Callback_OnDisconnectUser(uIndex);
-
-					closesocket(pConn->GetSocket());
-					pConn->SetConnStatus(kSIOCPConnStatus_Disconnected);
-					pServer->SetConn(uIndex, NULL);
-					pServer->m_xIndexGenerator.Push(pConn->GetConnIndex());
-					delete pConn;
+					LOGDEBUG("Close a connection %d", pConn->GetConnIndex());
+					SIOCPServer::__closeConnection(pConn);
 					pConn = NULL;
 				}
 			}
 			pServer->m_xDisconnectEventQueue.clear();
 			pServer->UnlockDisconnectEventQueue();
+		}
+		else if(dwActiveEvent == kSIOCPThreadEvent_Recv)
+		{
+			//	recv data, check readable
+			SIOCPCompletionKey key;
+			pServer->LockRecvEventQueue();
+
+			SIOCPEventQueue::iterator it = pServer->m_xRecvEventQueue.begin();
+			for(it;
+				it != pServer->m_xRecvEventQueue.end();
+				++it)
+			{
+				DWORD dwCompletionKey = (unsigned int)*it;
+				key.SetData(dwCompletionKey);
+				unsigned int uIndex = key.GetIndex();
+				SIOCPConn* pConn = pServer->GetConn(uIndex);
+
+				if(NULL == pConn)
+				{
+					LOGERROR("Recv data from a unexist socket of index %d", uIndex);
+					continue;
+				}
+				else
+				{
+					//	parse packet
+					LOGDEBUG("Conn %d recv %d bytes", uIndex, pConn->GetOverlappedRecv()->m_dwNumOfBytesRecvd);
+					if(__unpackPacket(pConn))
+					{
+						//	next read
+						pConn->PreRecv();
+					}
+					else
+					{
+						LOGERROR("Unpack conn %d data failed.close conn.", uIndex);
+						SIOCPServer::__closeConnection(pConn);
+						pConn = NULL;
+					}
+				}
+			}
+			pServer->m_xRecvEventQueue.clear();
+
+			pServer->UnlockRecvEventQueue();
 		}
 	}
 }

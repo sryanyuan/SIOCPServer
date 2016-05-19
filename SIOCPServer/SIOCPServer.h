@@ -54,6 +54,8 @@ enum SIOCPThreadEventType
 {
 	kSIOCPThreadEvent_Accept,
 	kSIOCPThreadEvent_Disconnect,
+	kSIOCPThreadEvent_Recv,
+	KSIOCPThreadEvent_Send,
 	kSIOCPThreadEvent_Total,
 };
 
@@ -77,6 +79,7 @@ public:
 	int Create();
 	int StartServer(const char* _pszHost, unsigned short _nPort, int _nMaxConn);
 	void SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv);
+	bool Send(unsigned int _uIndex, const char* _pData, size_t _uLength);
 
 protected:
 	void Callback_OnAcceptUser(unsigned int _uIndex);
@@ -92,6 +95,10 @@ protected:
 	void LockRecvEventQueue();
 	void UnlockRecvEventQueue();
 
+	void LockSendEventQueue();
+	void UnlockSendEventQueue();
+
+	void PushEvent(SIOCPThreadEventType _eType, void* _pEvt);
 	void EventAwake(SIOCPThreadEventType _eType);
 
 	void SetConn(unsigned int _uIndex, SIOCPConn* _pConn);
@@ -99,6 +106,10 @@ protected:
 
 public:
 	static void PostDisconnectEvent(SIOCPServer* _pServer, unsigned int _uIndex);
+
+protected:
+	static bool __unpackPacket(SIOCPConn* _pConn);
+	static void __closeConnection(SIOCPConn* _pConn);
 
 protected:
 	static unsigned int __stdcall __acceptThread(void* _pArg);
@@ -135,6 +146,9 @@ protected:
 
 	SIOCPEventQueue m_xRecvEventQueue;
 	CRITICAL_SECTION m_stRecvEventLock;
+
+	SIOCPEventQueue m_xSendEventQueue;
+	CRITICAL_SECTION m_stSendEventLock;
 };
 //////////////////////////////////////////////////////////////////////////
 #endif

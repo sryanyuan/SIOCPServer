@@ -94,6 +94,7 @@
     <ClCompile Include="IndexManager.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="SIOCPConn.cpp" />
+    <ClCompile Include="SIOCPConnPool.cpp" />
     <ClCompile Include="SIOCPServer.cpp" />
     <ClCompile Include="SIOCPThread.cpp" />
     <ClCompile Include="stdafx.cpp" />
