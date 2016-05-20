@@ -5,8 +5,7 @@ SIOCPOverlapped::SIOCPOverlapped(SIOCPConn* _pConn)
 {
 	memset(&m_stOverlapped, 0, sizeof(m_stOverlapped));
 	memset(&m_stBuf, 0, sizeof(m_stBuf));
-	m_xRecvBuffer.AllocBuffer(10 * 1024);
-	m_xSendBuffer.AllocBuffer(10 * 1024);
+	m_xDataBuffer.AllocBuffer(32 * 1024);
 	InitializeCriticalSection(&m_stSendLock);
 	m_pConn = _pConn;
 	Reset();
@@ -34,8 +33,8 @@ bool SIOCPOverlapped::PreRecv()
 		return false;
 	}
 
-	m_stBuf.buf = m_xRecvBuffer.GetFreeBufferPtr();
-	m_stBuf.len = m_xRecvBuffer.GetAvailableSize();
+	m_stBuf.buf = m_xDataBuffer.GetFreeBufferPtr();
+	m_stBuf.len = m_xDataBuffer.GetAvailableSize();
 
 	int nRet = WSARecv(m_hSocket, &m_stBuf, 1, &m_dwNumOfBytesRecvd, &m_dwRecvFlag, &m_stOverlapped, NULL);
 	if(nRet != SOCKET_ERROR)
@@ -65,8 +64,8 @@ bool SIOCPOverlapped::Send(const char* _pData, size_t _ulength)
 	//	write length
 	size_t uFullPacketLength = _ulength + PACKET_HEADER_LENGTH;
 	uFullPacketLength = htonl(uFullPacketLength);
-	m_xSendBuffer.Write((const char*)&uFullPacketLength, sizeof(size_t));
-	m_xSendBuffer.Write(_pData, _ulength);
+	m_xDataBuffer.Write((const char*)&uFullPacketLength, sizeof(size_t));
+	m_xDataBuffer.Write(_pData, _ulength);
 
 	if(!m_bSending)
 	{
@@ -83,13 +82,13 @@ bool SIOCPOverlapped::SendBuffer()
 {
 	bool bRet = true;
 
-	size_t uSendLength = m_xSendBuffer.GetReadableSize();
+	size_t uSendLength = m_xDataBuffer.GetReadableSize();
 	if(uSendLength > MAX_SEND_LENGTH_PER_TIME)
 	{
 		uSendLength = MAX_SEND_LENGTH_PER_TIME;
 	}
 
-	m_stBuf.buf = m_xSendBuffer.GetReadableBufferPtr();
+	m_stBuf.buf = m_xDataBuffer.GetReadableBufferPtr();
 	m_stBuf.len = uSendLength;
 	int nErr = WSASend(m_hSocket, &m_stBuf, 1, &m_dwNumOfBytesSent, m_dwSendFlag, &m_stOverlapped, NULL);
 
@@ -120,8 +119,8 @@ void SIOCPOverlapped::Reset()
 {
 	memset(&m_stOverlapped, 0, sizeof(m_stOverlapped));
 	memset(&m_stBuf, 0, sizeof(m_stBuf));
-	m_xRecvBuffer.Reset();
-	m_xSendBuffer.Reset();
+	m_xDataBuffer.Reset();
+	m_xDataBuffer.Reset();
 	m_dwNumOfBytesRecvd = 0;
 	m_dwNumOfBytesSent = 0;
 	m_dwSendFlag = 0;
@@ -148,6 +147,11 @@ SIOCPConn::SIOCPConn() : m_xOverlappedRead(this),
 
 	m_xOverlappedRead.m_nOverlappedMode = OVERLAPPED_MODE_READ;
 	m_xOverlappedSend.m_nOverlappedMode = OVERLAPPED_MODE_WRITE;
+}
+
+SIOCPConn::~SIOCPConn()
+{
+	
 }
 
 void SIOCPConn::Reset()

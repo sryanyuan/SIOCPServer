@@ -32,8 +32,7 @@ public:
 	WSABUF m_stBuf;
 	DWORD m_dwNumOfBytesRecvd;
 	DWORD m_dwNumOfBytesSent;
-	SIOCPBuffer m_xRecvBuffer;
-	SIOCPBuffer m_xSendBuffer;
+	SIOCPBuffer m_xDataBuffer;
 	SIOCPConn* m_pConn;
 	DWORD m_dwRecvFlag;
 	DWORD m_dwSendFlag;
@@ -55,7 +54,7 @@ class SIOCPConn
 {
 public:
 	SIOCPConn();
-	~SIOCPConn(){}
+	~SIOCPConn();
 
 public:
 	void Reset();
@@ -96,11 +95,12 @@ protected:
 
 public:
 	static SIOCPConnPool* GetInstance();
-	static void DestoryInstance();
+	static void DestroyInstance();
 
 public:
 	SIOCPConn* GetConnection();
 	void FreeConnection(SIOCPConn* _pConn);
+	void Clear();
 
 private:
 	SIOCPConnList m_xConnList;

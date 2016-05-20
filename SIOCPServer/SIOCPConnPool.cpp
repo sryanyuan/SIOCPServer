@@ -9,7 +9,7 @@ SIOCPConnPool::SIOCPConnPool()
 
 SIOCPConnPool::~SIOCPConnPool()
 {
-
+	Clear();
 }
 
 SIOCPConnPool* SIOCPConnPool::GetInstance()
@@ -21,7 +21,7 @@ SIOCPConnPool* SIOCPConnPool::GetInstance()
 	return s_pConnPool;
 }
 
-void SIOCPConnPool::DestoryInstance()
+void SIOCPConnPool::DestroyInstance()
 {
 	if(NULL != s_pConnPool)
 	{
@@ -53,4 +53,17 @@ SIOCPConn* SIOCPConnPool::GetConnection()
 void SIOCPConnPool::FreeConnection(SIOCPConn* _pConn)
 {
 	m_xConnList.push_back(_pConn);
+}
+
+void SIOCPConnPool::Clear()
+{
+	SIOCPConnList::iterator it = m_xConnList.begin();
+	for(it;
+		it != m_xConnList.end();
+		++it)
+	{
+		SIOCPConn* pConn = *it;
+		delete pConn;
+	}
+	m_xConnList.clear();
 }

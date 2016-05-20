@@ -15,13 +15,14 @@ SIOCPServer::SIOCPServer()
 	m_listenSocket = INVALID_SOCKET;
 	memset(&m_stSockAddr, 0, sizeof(sockaddr_in));
 	memset(m_hEvents, 0, sizeof(m_hEvents));
+	m_dwCompletionWorkerThreadCount = 0;
 
-	m_hAcceptThread = INVALID_HANDLE_VALUE;
-	m_hEventThread = INVALID_HANDLE_VALUE;
+	m_hAcceptThread = NULL;
+	m_hEventThread = NULL;
 	m_hCompletionPort = NULL;
 	for(int i = 0;  i < sizeof(m_hCompletionPortThreads) / sizeof(m_hCompletionPortThreads[0]); ++i)
 	{
-		m_hCompletionPortThreads[i] = INVALID_HANDLE_VALUE;
+		m_hCompletionPortThreads[i] = NULL;
 	}
 
 	InitializeCriticalSection(&m_stAcceptEventLock);
@@ -30,10 +31,13 @@ SIOCPServer::SIOCPServer()
 	InitializeCriticalSection(&m_stSendEventLock);
 
 	m_pIndexGenerator = NULL;
+	m_bAcceptConnection = false;
 }
 
 SIOCPServer::~SIOCPServer()
 {
+	Shutdown();
+
 	DeleteCriticalSection(&m_stAcceptEventLock);
 	DeleteCriticalSection(&m_stDisconnectEventLock);
 	DeleteCriticalSection(&m_stRecvEventLock);
@@ -68,7 +72,7 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 		this,
 		0,
 		NULL);
-	if(INVALID_HANDLE_VALUE == m_hEventThread)
+	if(NULL == m_hEventThread)
 	{
 		LOGERROR("Failed to create event thread");
 		return -1;
@@ -77,8 +81,9 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 	//	create worker threads
 	SYSTEM_INFO si = {0};
 	GetSystemInfo(&si);
+	m_dwCompletionWorkerThreadCount = si.dwNumberOfProcessors * 2;
 
-	for(DWORD i = 0; i < si.dwNumberOfProcessors; ++i)
+	for(DWORD i = 0; i < m_dwCompletionWorkerThreadCount; ++i)
 	{
 		HANDLE hThread = (HANDLE)_beginthreadex(NULL,
 			0,
@@ -86,7 +91,7 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 			this,
 			0,
 			NULL);
-		if(INVALID_HANDLE_VALUE == hThread)
+		if(NULL == hThread)
 		{
 			LOGERROR("Failed to create completion port worker thread.");
 			return -1;
@@ -128,19 +133,88 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 	memset(m_pConns, 0, sizeof(SIOCPConn*) * (_nMaxConn + 1));
 
 	//	start accept thread
+	m_bAcceptConnection = true;
 	m_hAcceptThread = (HANDLE)_beginthreadex(NULL,
 		0,
 		&SIOCPServer::__acceptThread,
 		this,
 		0,
 		NULL);
-	if(INVALID_HANDLE_VALUE == m_hAcceptThread)
+	if(NULL == m_hAcceptThread)
 	{
 		LOGERROR("Create accept thread failed.");
 		return -1;
 	}
 
 	return 0;
+}
+
+void SIOCPServer::Shutdown()
+{
+	if(INVALID_SOCKET == m_listenSocket)
+	{
+		//	not listen
+		return;
+	}
+
+	//	post destroy completion port message, first close all connections
+	m_bAcceptConnection = false;
+	closesocket(m_listenSocket);
+	m_listenSocket = INVALID_SOCKET;
+	LOGINFO("Terminate Accept thread...");
+	WaitForSingleObject(m_hAcceptThread, INFINITE);
+	CloseHandle(m_hAcceptThread);
+	m_hAcceptThread = NULL;
+	LOGINFO("Terminate Accept thread done!");
+
+	//	terminate all worker thread
+	LOGINFO("Terminate worker thread...");
+	if(m_hCompletionPort)
+	{
+		SIOCPCompletionKey key;
+		key.SetAction(kSIOCPCompletionAction_Destroy);
+		for(DWORD i = 0; i < m_dwCompletionWorkerThreadCount; ++i)
+		{
+			PostQueuedCompletionStatus(m_hCompletionPort, 0, key.GetData(), NULL);
+		}
+		WaitForMultipleObjects(m_dwCompletionWorkerThreadCount, m_hCompletionPortThreads, TRUE, INFINITE);
+		for(DWORD i = 0; i < m_dwCompletionWorkerThreadCount; ++i)
+		{
+			CloseHandle(m_hCompletionPortThreads[i]);
+			m_hCompletionPortThreads[i] = NULL;
+		}
+
+		CloseHandle(m_hCompletionPort);
+		m_hCompletionPort = NULL;
+	}
+	LOGINFO("Terminate worker thread done!");
+
+	LOGINFO("Terminate process thread...");
+	PushEvent(kSIOCPThreadEvent_Destroy, NULL);
+	WaitForSingleObject(m_hEventThread, INFINITE);
+	CloseHandle(m_hEventThread);
+	m_hEventThread = NULL;
+	LOGINFO("Terminate process end");
+
+	//	close all connections
+	LOGINFO("Close connections...");
+	unsigned int uMaxConn = m_pIndexGenerator->GetMaxIndex();
+	for(unsigned int i = 1; i < uMaxConn + 1; ++i)
+	{
+		SIOCPConn* pConn = m_pConns[i];
+		if(NULL == pConn)
+		{
+			continue;
+		}
+
+		if(pConn->GetConnStatus() == kSIOCPConnStatus_Connected)
+		{
+			__closeConnection(pConn);
+		}
+	}
+	SIOCPConnPool::GetInstance()->Clear();
+	LOGINFO("Close connections end");
+	LOGINFO("Shut down ok!");
 }
 
 bool SIOCPServer::Send(unsigned int _uIndex, const char* _pData, size_t _uLength)
@@ -261,6 +335,10 @@ void SIOCPServer::PushEvent(SIOCPThreadEventType _eType, void* _pEvt)
 		break;
 	case kSIOCPThreadEvent_Total:
 		break;
+	case kSIOCPThreadEvent_Destroy:
+		{
+			//	just SetEvent
+		}break;
 	default:
 		break;
 	}
@@ -292,7 +370,7 @@ SIOCPConn* SIOCPServer::GetConn(unsigned int _uIndex)
 	if(_uIndex == 0 ||
 		_uIndex > m_pIndexGenerator->GetMaxIndex())
 	{
-		LOGERROR("Failed to set conn.Index out of range %d", _uIndex);
+		LOGERROR("Failed to get conn.Index out of range %d", _uIndex);
 		return NULL;
 	}
 
@@ -343,11 +421,11 @@ bool SIOCPServer::__unpackPacket(SIOCPConn* _pConn)
 
 	//	move buffer pointer
 	SIOCPOverlapped* pOl = _pConn->GetOverlappedRecv();
-	pOl->m_xRecvBuffer.MoveDataOffset(int(pOl->m_dwNumOfBytesRecvd));
+	pOl->m_xDataBuffer.MoveDataOffset(int(pOl->m_dwNumOfBytesRecvd));
 
 	//	unpack packet
-	const char* pHead = pOl->m_xRecvBuffer.GetReadableBufferPtr();
-	size_t uReadableLength = pOl->m_xRecvBuffer.GetReadableSize();
+	const char* pHead = pOl->m_xDataBuffer.GetReadableBufferPtr();
+	size_t uReadableLength = pOl->m_xDataBuffer.GetReadableSize();
 
 	if(uReadableLength < PACKET_HEADER_LENGTH)
 	{
@@ -377,7 +455,7 @@ bool SIOCPServer::__unpackPacket(SIOCPConn* _pConn)
 
 			//	move read pointer
 			uReadableLength -= uPacketLength;
-			pOl->m_xRecvBuffer.Read(NULL, uPacketLength);
+			pOl->m_xDataBuffer.Read(NULL, uPacketLength);
 			pHead += uPacketLength;
 		}
 		else
@@ -394,11 +472,11 @@ bool SIOCPServer::__unpackPacket(SIOCPConn* _pConn)
 	}
 
 	//	reset the recv buffer
-	size_t uReadOffset = pOl->m_xRecvBuffer.GetReadOffset();
+	size_t uReadOffset = pOl->m_xDataBuffer.GetReadOffset();
 	if(0 != uReadOffset)
 	{
 		//	memmove buffer
-		pOl->m_xRecvBuffer.BackwardMove(uReadOffset);
+		pOl->m_xDataBuffer.BackwardMove(uReadOffset);
 	}
 
 	return true;

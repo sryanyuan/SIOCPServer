@@ -18,6 +18,12 @@ unsigned int SIOCPServer::__acceptThread(void* _pArg)
 			break;
 		}
 
+		if(!pServer->m_bAcceptConnection)
+		{
+			LOGINFO("Accept thread received quit command");
+			break;
+		}
+
 		//	push event
 		pServer->LockAcceptEventQueue();
 		pServer->m_xAcceptEventQueue.push_back((void*)clientSocket);
@@ -56,7 +62,12 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 			}
 		}
 
-		if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Disconnect ||
+		if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Destroy)
+		{
+			LOGINFO("Destroy completion worker thread");
+			break;
+		}
+		else if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Disconnect ||
 			dwNumOfBytesTransferred == 0)
 		{
 			//	process disconnect
@@ -64,11 +75,6 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 			//	push event
 			pServer->PushEvent(kSIOCPThreadEvent_Disconnect, (void*)uConnIndex);
 			continue;
-		}
-		else if(stCompletionKey.GetAction() == kSIOCPCompletionAction_Destory)
-		{
-			LOGINFO("Destory completion worker thread");
-			break;
 		}
 
 		SIOCPOverlapped* pIO = (SIOCPOverlapped*)pOverlapped;
@@ -94,7 +100,7 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 			//	next send
 			pIO->LockSend();
 
-			SIOCPBuffer& refBuffer = pIO->m_xSendBuffer;
+			SIOCPBuffer& refBuffer = pIO->m_xDataBuffer;
 			refBuffer.Read(NULL, dwNumOfBytesTransferred);
 
 			//	move data?
@@ -258,5 +264,12 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 
 			pServer->UnlockRecvEventQueue();
 		}
+		else if(dwActiveEvent == kSIOCPThreadEvent_Destroy)
+		{
+			break;
+		}
 	}
+
+	LOGINFO("Process thread end.");
+	return 0;
 }

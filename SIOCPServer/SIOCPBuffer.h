@@ -15,6 +15,7 @@ public:
 	}
 	~SIOCPBuffer()
 	{
+		printf("free\n");
 		FreeBuffer();
 	}
 

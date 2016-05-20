@@ -9,7 +9,7 @@ enum SIOCPCompletionActionType
 {
 	kSIOCPCompletionAction_Default,
 	kSIOCPCompletionAction_Disconnect,
-	kSIOCPCompletionAction_Destory,
+	kSIOCPCompletionAction_Destroy,
 };
 
 struct SIOCPCompletionKey
@@ -55,6 +55,7 @@ enum SIOCPThreadEventType
 	kSIOCPThreadEvent_Disconnect,
 	kSIOCPThreadEvent_Recv,
 	KSIOCPThreadEvent_Send,
+	kSIOCPThreadEvent_Destroy,
 	kSIOCPThreadEvent_Total,
 };
 
@@ -78,6 +79,7 @@ public:
 public:
 	int Create();
 	int StartServer(const char* _pszHost, unsigned short _nPort, int _nMaxConn);
+	void Shutdown();
 	void SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv);
 	bool Send(unsigned int _uIndex, const char* _pData, size_t _uLength);
 
@@ -130,6 +132,7 @@ protected:
 	HANDLE m_hAcceptThread;
 	HANDLE m_hEventThread;
 	HANDLE m_hCompletionPort;
+	DWORD m_dwCompletionWorkerThreadCount;
 	HANDLE m_hCompletionPortThreads[MAX_WORKER_THREAD_COUNT];
 
 	IndexManager* m_pIndexGenerator;
@@ -149,6 +152,8 @@ protected:
 
 	SIOCPEventQueue m_xSendEventQueue;
 	CRITICAL_SECTION m_stSendEventLock;
+
+	bool m_bAcceptConnection;
 };
 //////////////////////////////////////////////////////////////////////////
 #endif

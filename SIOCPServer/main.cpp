@@ -6,6 +6,7 @@
 #include "stdafx.h"
 #include "SIOCPServer.h"
 #include "Logger.h"
+#include <crtdbg.h>
 
 SIOCPServer server;
 
@@ -26,7 +27,7 @@ void onRecv(unsigned int _index, const char* _data, unsigned int _len)
 	//	echo
 	server.Send(_index, _data, _len);
 
-	SIOCPServer::PostDisconnectEvent(&server, _index);
+	//SIOCPServer::PostDisconnectEvent(&server, _index);
 }
 
 int _tmain(int argc, _TCHAR* argv[])
@@ -36,10 +37,22 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	server.StartServer("127.0.0.1", 2222, 50);
 	server.SetEventCallback(onAccept, onDisconnect, onRecv);
-	while(1)
-	{
-		Sleep(10);
-	}
+	
+	getchar();
+	server.Shutdown();
+	getchar();
+
+	server.StartServer("127.0.0.1", 2222, 50);
+	getchar();
+	server.Shutdown();
+	getchar();
+
+	WSACleanup();
+
+#ifdef _DEBUG
+	_CrtDumpMemoryLeaks();
+#endif
+
 	return 0;
 }
 
