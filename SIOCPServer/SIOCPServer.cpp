@@ -2,6 +2,7 @@
 #include "Logger.h"
 #include "SIOCPConn.h"
 #include <process.h>
+#include "IndexManager.h"
 //////////////////////////////////////////////////////////////////////////
 #pragma comment(lib, "ws2_32.lib")
 //////////////////////////////////////////////////////////////////////////
@@ -27,6 +28,8 @@ SIOCPServer::SIOCPServer()
 	InitializeCriticalSection(&m_stDisconnectEventLock);
 	InitializeCriticalSection(&m_stRecvEventLock);
 	InitializeCriticalSection(&m_stSendEventLock);
+
+	m_pIndexGenerator = NULL;
 }
 
 SIOCPServer::~SIOCPServer()
@@ -35,6 +38,12 @@ SIOCPServer::~SIOCPServer()
 	DeleteCriticalSection(&m_stDisconnectEventLock);
 	DeleteCriticalSection(&m_stRecvEventLock);
 	DeleteCriticalSection(&m_stSendEventLock);
+
+	if(NULL != m_pIndexGenerator)
+	{
+		delete m_pIndexGenerator;
+		m_pIndexGenerator = NULL;
+	}
 }
 
 
@@ -113,7 +122,8 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 	}
 
 	//	init index generator
-	m_xIndexGenerator.Init(size_t(_nMaxConn));
+	m_pIndexGenerator = new IndexManager;
+	m_pIndexGenerator->Init(size_t(_nMaxConn));
 	m_pConns = new SIOCPConn*[_nMaxConn + 1];
 	memset(m_pConns, 0, sizeof(SIOCPConn*) * (_nMaxConn + 1));
 
@@ -268,7 +278,7 @@ void SIOCPServer::EventAwake(SIOCPThreadEventType _eType)
 void SIOCPServer::SetConn(unsigned int _uIndex, SIOCPConn* _pConn)
 {
 	if(_uIndex == 0 ||
-		_uIndex > m_xIndexGenerator.GetMaxIndex())
+		_uIndex > m_pIndexGenerator->GetMaxIndex())
 	{
 		LOGERROR("Failed to set conn.Index out of range %d", _uIndex);
 		return;
@@ -280,7 +290,7 @@ void SIOCPServer::SetConn(unsigned int _uIndex, SIOCPConn* _pConn)
 SIOCPConn* SIOCPServer::GetConn(unsigned int _uIndex)
 {
 	if(_uIndex == 0 ||
-		_uIndex > m_xIndexGenerator.GetMaxIndex())
+		_uIndex > m_pIndexGenerator->GetMaxIndex())
 	{
 		LOGERROR("Failed to set conn.Index out of range %d", _uIndex);
 		return NULL;
@@ -314,10 +324,10 @@ void SIOCPServer::__closeConnection(SIOCPConn* _pConn)
 	pServer->Callback_OnDisconnectUser(_pConn->GetConnIndex());
 
 	_pConn->SetConnStatus(kSIOCPConnStatus_Disconnected);
+	closesocket(_pConn->GetSocket());
 	_pConn->SetSocket(INVALID_SOCKET);
 	pServer->SetConn(_pConn->GetConnIndex(), NULL);
-	pServer->m_xIndexGenerator.Push(_pConn->GetConnIndex());
-	closesocket(_pConn->GetSocket());
+	pServer->m_pIndexGenerator->Push(_pConn->GetConnIndex());
 	//delete _pConn;
 	SIOCPConnPool::GetInstance()->FreeConnection(_pConn);
 }

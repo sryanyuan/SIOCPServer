@@ -1,5 +1,6 @@
 #include "SIOCPServer.h"
 #include "SIOCPConn.h"
+#include "IndexManager.h"
 #include "Logger.h"
 //////////////////////////////////////////////////////////////////////////
 unsigned int SIOCPServer::__acceptThread(void* _pArg)
@@ -42,14 +43,16 @@ unsigned int SIOCPServer::__completionPortWorker(void* _pArg)
 		if(FALSE == GetQueuedCompletionStatus(pServer->m_hCompletionPort, &dwNumOfBytesTransferred, (DWORD*)&stCompletionKey, &pOverlapped, INFINITE))
 		{
 			int nErr = WSAGetLastError();
-			if(nErr != ERROR_NETNAME_DELETED)
+			if(nErr == ERROR_NETNAME_DELETED)
 			{
-				LOGERROR("Get queued completion status failed.Error %d", nErr);
-				continue;
+				//	connection closed, continue process and close the socket
+				LOGDEBUG("ERROR_NETNAME_DELETED");
 			}
 			else
 			{
-				LOGDEBUG("ERROR_NETNAME_DELETED");
+				//	do not process
+				LOGDEBUG("WSAGetLastError: %d", nErr);
+				continue;
 			}
 		}
 
@@ -145,7 +148,7 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 				SOCKET sock = (SOCKET)*it;
 
 				//	get index
-				unsigned int uIndex = pServer->m_xIndexGenerator.Pop();
+				unsigned int uIndex = pServer->m_pIndexGenerator->Pop();
 				if(0 == uIndex)
 				{
 					//	failed

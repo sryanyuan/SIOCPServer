@@ -2,7 +2,6 @@
 #define _INC_SIOCPSERVER_
 //////////////////////////////////////////////////////////////////////////
 #include "Def.h"
-#include "IndexManager.h"
 #include <WinSock2.h>
 #include <list>
 //////////////////////////////////////////////////////////////////////////
@@ -66,6 +65,7 @@ struct SIOCPAcceptEvent
 typedef std::list<void*> SIOCPEventQueue;
 
 class SIOCPConn;
+class IndexManager;
 
 class SIOCPServer
 {
@@ -132,7 +132,7 @@ protected:
 	HANDLE m_hCompletionPort;
 	HANDLE m_hCompletionPortThreads[MAX_WORKER_THREAD_COUNT];
 
-	IndexManager m_xIndexGenerator;
+	IndexManager* m_pIndexGenerator;
 
 	//	connections
 	SIOCPConn** m_pConns;

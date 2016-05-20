@@ -1,7 +1,11 @@
 SIOCPServer/Debug/
 SIOCPServer/Release/
+SIOCPServer/StaticDebug/
+SIOCPServer/StaticRelease/
 SIOCPServer.sdf
 Debug/
 Release/
+StaticDebug/
+StaticRelease/
 SIOCPServer.opensdf
 SIOCPServer.v11.suo
