@@ -1,3 +1,10 @@
+#ifdef _DEBUG
+#define DEBUG_CLIENTBLOCK  new( _CLIENT_BLOCK, __FILE__, __LINE__)
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#define new DEBUG_CLIENTBLOCK
+#endif
+//////////////////////////////////////////////////////////////////////////
 #include "IndexManager.h"
 //////////////////////////////////////////////////////////////////////////
 unsigned int IndexManager::s_uInvalidIndex = 0;
@@ -138,7 +145,17 @@ IndexManager::IndexManager()
 
 IndexManager::~IndexManager()
 {
+	if(NULL != m_ppIndexDescTable)
+	{
+		delete [] m_ppIndexDescTable;
+		m_ppIndexDescTable = NULL;
+	}
 
+	if(NULL != m_pIndexList)
+	{
+		delete [] m_pIndexList;
+		m_pIndexList = NULL;
+	}
 }
 
 void IndexManager::Init(size_t _uSize)

@@ -3,12 +3,18 @@
 
 #ifndef _LIB
 
+#ifdef _DEBUG
+#define DEBUG_CLIENTBLOCK  new( _CLIENT_BLOCK, __FILE__, __LINE__)
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#define new DEBUG_CLIENTBLOCK
+#endif
+
 #include "stdafx.h"
 #include "SIOCPServer.h"
 #include "Logger.h"
-#include <crtdbg.h>
 
-SIOCPServer server;
+SIOCPServer* pServer;
 
 void onAccept(unsigned int _index)
 {
@@ -25,7 +31,7 @@ void onRecv(unsigned int _index, const char* _data, unsigned int _len)
 	LOGINFO("recv %d data len %d", _index, _len);
 
 	//	echo
-	server.Send(_index, _data, _len);
+	pServer->Send(_index, _data, _len);
 
 	//SIOCPServer::PostDisconnectEvent(&server, _index);
 }
@@ -35,13 +41,20 @@ int _tmain(int argc, _TCHAR* argv[])
 	WSADATA wsa_data;
 	WSAStartup(0x0202, &wsa_data);
 
+	if(1)
 	{
-		server.StartServer("127.0.0.1", 2222, 50);
-		server.SetEventCallback(onAccept, onDisconnect, onRecv);
+		pServer = new SIOCPServer;
+		pServer->StartServer("127.0.0.1", 2222, 50);
+		pServer->SetEventCallback(onAccept, onDisconnect, onRecv);
 
 		getchar();
-		server.Shutdown();
+		pServer->Shutdown();
 		getchar();
+
+		delete pServer;
+		pServer = NULL;
+
+		SIOCPServer::Free();
 	}
 
 	WSACleanup();

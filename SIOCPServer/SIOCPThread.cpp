@@ -1,3 +1,10 @@
+#ifdef _DEBUG
+#define DEBUG_CLIENTBLOCK  new( _CLIENT_BLOCK, __FILE__, __LINE__)
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#define new DEBUG_CLIENTBLOCK
+#endif
+//////////////////////////////////////////////////////////////////////////
 #include "SIOCPServer.h"
 #include "SIOCPConn.h"
 #include "IndexManager.h"

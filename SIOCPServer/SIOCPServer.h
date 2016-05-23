@@ -108,6 +108,7 @@ protected:
 
 public:
 	static void PostDisconnectEvent(SIOCPServer* _pServer, unsigned int _uIndex);
+	static void Free();
 
 protected:
 	static bool __unpackPacket(SIOCPConn* _pConn);

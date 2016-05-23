@@ -1,3 +1,10 @@
+#ifdef _DEBUG
+#define DEBUG_CLIENTBLOCK  new( _CLIENT_BLOCK, __FILE__, __LINE__)
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#define new DEBUG_CLIENTBLOCK
+#endif
+//////////////////////////////////////////////////////////////////////////
 #include "SIOCPServer.h"
 #include "Logger.h"
 #include "SIOCPConn.h"
@@ -47,6 +54,13 @@ SIOCPServer::~SIOCPServer()
 	{
 		delete m_pIndexGenerator;
 		m_pIndexGenerator = NULL;
+	}
+
+	//	delete conn array
+	if(NULL != m_pConns)
+	{
+		delete []m_pConns;
+		m_pConns = NULL;
 	}
 }
 
@@ -388,6 +402,12 @@ void SIOCPServer::PostDisconnectEvent(SIOCPServer* _pServer, unsigned int _uInde
 	key.SetAction(kSIOCPCompletionAction_Disconnect);
 
 	PostQueuedCompletionStatus(_pServer->m_hCompletionPort, 0, key.GetData(), NULL);
+}
+
+void SIOCPServer::Free()
+{
+	//	free 
+	SIOCPConnPool::DestroyInstance();
 }
 
 
