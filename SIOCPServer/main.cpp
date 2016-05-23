@@ -35,17 +35,14 @@ int _tmain(int argc, _TCHAR* argv[])
 	WSADATA wsa_data;
 	WSAStartup(0x0202, &wsa_data);
 
-	server.StartServer("127.0.0.1", 2222, 50);
-	server.SetEventCallback(onAccept, onDisconnect, onRecv);
-	
-	getchar();
-	server.Shutdown();
-	getchar();
+	{
+		server.StartServer("127.0.0.1", 2222, 50);
+		server.SetEventCallback(onAccept, onDisconnect, onRecv);
 
-	server.StartServer("127.0.0.1", 2222, 50);
-	getchar();
-	server.Shutdown();
-	getchar();
+		getchar();
+		server.Shutdown();
+		getchar();
+	}
 
 	WSACleanup();
 

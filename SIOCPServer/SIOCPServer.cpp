@@ -333,13 +333,15 @@ void SIOCPServer::PushEvent(SIOCPThreadEventType _eType, void* _pEvt)
 		break;
 	case KSIOCPThreadEvent_Send:
 		break;
-	case kSIOCPThreadEvent_Total:
-		break;
 	case kSIOCPThreadEvent_Destroy:
 		{
 			//	just SetEvent
 		}break;
 	default:
+		{
+			LOGERROR("Awake invalid event %d", _eType);
+			return;
+		}
 		break;
 	}
 
