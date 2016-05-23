@@ -10,6 +10,7 @@
 #include "SIOCPConn.h"
 #include <process.h>
 #include "IndexManager.h"
+#include "SIOCPTimer.h"
 //////////////////////////////////////////////////////////////////////////
 #pragma comment(lib, "ws2_32.lib")
 //////////////////////////////////////////////////////////////////////////
@@ -27,6 +28,7 @@ SIOCPServer::SIOCPServer()
 	m_hAcceptThread = NULL;
 	m_hEventThread = NULL;
 	m_hCompletionPort = NULL;
+	m_hTimerThread = NULL;
 	for(int i = 0;  i < sizeof(m_hCompletionPortThreads) / sizeof(m_hCompletionPortThreads[0]); ++i)
 	{
 		m_hCompletionPortThreads[i] = NULL;
@@ -36,9 +38,12 @@ SIOCPServer::SIOCPServer()
 	InitializeCriticalSection(&m_stDisconnectEventLock);
 	InitializeCriticalSection(&m_stRecvEventLock);
 	InitializeCriticalSection(&m_stSendEventLock);
+	InitializeCriticalSection(&m_stTimerEventLock);
 
 	m_pIndexGenerator = NULL;
-	m_bAcceptConnection = false;
+	m_bServerRunning = false;
+
+	m_pTimerControl = new SIOCPTimerControl(this);
 }
 
 SIOCPServer::~SIOCPServer()
@@ -49,6 +54,7 @@ SIOCPServer::~SIOCPServer()
 	DeleteCriticalSection(&m_stDisconnectEventLock);
 	DeleteCriticalSection(&m_stRecvEventLock);
 	DeleteCriticalSection(&m_stSendEventLock);
+	DeleteCriticalSection(&m_stTimerEventLock);
 
 	if(NULL != m_pIndexGenerator)
 	{
@@ -61,6 +67,12 @@ SIOCPServer::~SIOCPServer()
 	{
 		delete []m_pConns;
 		m_pConns = NULL;
+	}
+
+	if(NULL != m_pTimerControl)
+	{
+		delete m_pTimerControl;
+		m_pTimerControl = NULL;
 	}
 }
 
@@ -147,7 +159,7 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 	memset(m_pConns, 0, sizeof(SIOCPConn*) * (_nMaxConn + 1));
 
 	//	start accept thread
-	m_bAcceptConnection = true;
+	m_bServerRunning = true;
 	m_hAcceptThread = (HANDLE)_beginthreadex(NULL,
 		0,
 		&SIOCPServer::__acceptThread,
@@ -160,7 +172,29 @@ int SIOCPServer::StartServer(const char* _pszHost, unsigned short _nPort, int _n
 		return -1;
 	}
 
+	//	start timer thread
+	m_hTimerThread = (HANDLE)_beginthreadex(NULL,
+		0,
+		&SIOCPServer::__timerThread,
+		this,
+		0,
+		NULL);
+	if(NULL == m_hTimerThread)
+	{
+		LOGERROR("Create timer thread failed.");
+	}
+
 	return 0;
+}
+
+void SIOCPServer::AddTimer(int _nTimerId, int _nInterval, bool _bTriggerOnce)
+{
+	if(NULL != m_hTimerThread)
+	{
+		LOGERROR("Can't add timer when server is running");
+		return;
+	}
+	m_pTimerControl->AddTimer(_nTimerId, _nInterval, _bTriggerOnce);
 }
 
 void SIOCPServer::Shutdown()
@@ -172,7 +206,7 @@ void SIOCPServer::Shutdown()
 	}
 
 	//	post destroy completion port message, first close all connections
-	m_bAcceptConnection = false;
+	m_bServerRunning = false;
 	closesocket(m_listenSocket);
 	m_listenSocket = INVALID_SOCKET;
 	LOGINFO("Terminate Accept thread...");
@@ -228,6 +262,17 @@ void SIOCPServer::Shutdown()
 	}
 	SIOCPConnPool::GetInstance()->Clear();
 	LOGINFO("Close connections end");
+
+	//	terminate timer thread
+	LOGINFO("Terminate timer thread...");
+	if(NULL != m_hTimerThread)
+	{
+		WaitForSingleObject(m_hTimerThread, INFINITE);
+		CloseHandle(m_hTimerThread);
+		m_hTimerThread = NULL;
+	}
+	LOGINFO("Terminate timer thread end");
+
 	LOGINFO("Shut down ok!");
 }
 
@@ -245,11 +290,12 @@ bool SIOCPServer::Send(unsigned int _uIndex, const char* _pData, size_t _uLength
 	return pConn->Send(_pData, _uLength);
 }
 
-void SIOCPServer::SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv)
+void SIOCPServer::SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv, FUNC_ONTIMER _fnOnTimer)
 {
 	m_fnOnAcceptUser = _fnOnAccept;
 	m_fnOnDisconnectUser = _fnOnDisconnect;
 	m_fnOnRecvFromUser = _fnOnRecv;
+	m_fnOnTimer = _fnOnTimer;
 }
 
 void SIOCPServer::Callback_OnAcceptUser(unsigned int _uIndex)
@@ -277,6 +323,15 @@ void SIOCPServer::Callback_OnRecvFromUser(unsigned int _uIndex, const char* _pDa
 		return;
 	}
 	m_fnOnRecvFromUser(_uIndex, _pData, _uLen);
+}
+
+void SIOCPServer::Callback_OnTimer(int _nTimerId)
+{
+	if(NULL == m_fnOnTimer)
+	{
+		return;
+	}
+	m_fnOnTimer(_nTimerId);
 }
 
 
@@ -320,6 +375,16 @@ void SIOCPServer::UnlockSendEventQueue()
 	LeaveCriticalSection(&m_stSendEventLock);
 }
 
+void SIOCPServer::LockTimerEventQueue()
+{
+	EnterCriticalSection(&m_stTimerEventLock);
+}
+
+void SIOCPServer::UnlockTimerEventQueue()
+{
+	LeaveCriticalSection(&m_stTimerEventLock);
+}
+
 void SIOCPServer::PushEvent(SIOCPThreadEventType _eType, void* _pEvt)
 {
 	switch (_eType)
@@ -350,6 +415,12 @@ void SIOCPServer::PushEvent(SIOCPThreadEventType _eType, void* _pEvt)
 	case kSIOCPThreadEvent_Destroy:
 		{
 			//	just SetEvent
+		}break;
+	case kSIOCPThreadEvent_Timer:
+		{
+			LockTimerEventQueue();
+			m_xTimerEventQueue.push_back(_pEvt);
+			UnlockTimerEventQueue();
 		}break;
 	default:
 		{
@@ -408,6 +479,7 @@ void SIOCPServer::Free()
 {
 	//	free 
 	SIOCPConnPool::DestroyInstance();
+	SIOCPTimerPool::DestroyInstance();
 }
 
 

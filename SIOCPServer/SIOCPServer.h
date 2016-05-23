@@ -56,6 +56,7 @@ enum SIOCPThreadEventType
 	kSIOCPThreadEvent_Recv,
 	KSIOCPThreadEvent_Send,
 	kSIOCPThreadEvent_Destroy,
+	kSIOCPThreadEvent_Timer,
 	kSIOCPThreadEvent_Total,
 };
 
@@ -67,10 +68,12 @@ typedef std::list<void*> SIOCPEventQueue;
 
 class SIOCPConn;
 class IndexManager;
+class SIOCPTimerControl;
 
 class SIOCPServer
 {
 	friend class SIOCPOverlapped;
+	friend class SIOCPTimerControl;
 
 public:
 	SIOCPServer();
@@ -79,14 +82,16 @@ public:
 public:
 	int Create();
 	int StartServer(const char* _pszHost, unsigned short _nPort, int _nMaxConn);
+	void AddTimer(int _nTimerId, int _nInterval, bool _bTriggerOnce);
 	void Shutdown();
-	void SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv);
+	void SetEventCallback(FUNC_ONACCEPT _fnOnAccept, FUNC_ONDISCONNECT _fnOnDisconnect, FUNC_ONRECV _fnOnRecv, FUNC_ONTIMER _fnOnTimer);
 	bool Send(unsigned int _uIndex, const char* _pData, size_t _uLength);
 
 protected:
 	void Callback_OnAcceptUser(unsigned int _uIndex);
 	void Callback_OnDisconnectUser(unsigned int _uIndex);
 	void Callback_OnRecvFromUser(unsigned int _uIndex, const char* _pData, size_t _uLen);
+	void Callback_OnTimer(int _nTimerId);
 
 	void LockAcceptEventQueue();
 	void UnlockAcceptEventQueue();
@@ -99,6 +104,9 @@ protected:
 
 	void LockSendEventQueue();
 	void UnlockSendEventQueue();
+
+	void LockTimerEventQueue();
+	void UnlockTimerEventQueue();
 
 	void PushEvent(SIOCPThreadEventType _eType, void* _pEvt);
 	void EventAwake(SIOCPThreadEventType _eType);
@@ -118,6 +126,7 @@ protected:
 	static unsigned int __stdcall __acceptThread(void* _pArg);
 	static unsigned int __stdcall __completionPortWorker(void* _pArg);
 	static unsigned int __stdcall __eventThread(void* _pArg);
+	static unsigned int __stdcall __timerThread(void* _pArg);
 
 protected:
 	//	event thread
@@ -126,6 +135,7 @@ protected:
 	FUNC_ONACCEPT m_fnOnAcceptUser;
 	FUNC_ONDISCONNECT m_fnOnDisconnectUser;
 	FUNC_ONRECV m_fnOnRecvFromUser;
+	FUNC_ONTIMER m_fnOnTimer;
 
 	SOCKET m_listenSocket;
 	sockaddr_in m_stSockAddr;
@@ -135,6 +145,7 @@ protected:
 	HANDLE m_hCompletionPort;
 	DWORD m_dwCompletionWorkerThreadCount;
 	HANDLE m_hCompletionPortThreads[MAX_WORKER_THREAD_COUNT];
+	HANDLE m_hTimerThread;
 
 	IndexManager* m_pIndexGenerator;
 
@@ -154,7 +165,13 @@ protected:
 	SIOCPEventQueue m_xSendEventQueue;
 	CRITICAL_SECTION m_stSendEventLock;
 
-	bool m_bAcceptConnection;
+	SIOCPEventQueue m_xTimerEventQueue;
+	CRITICAL_SECTION m_stTimerEventLock;
+
+	bool m_bServerRunning;
+
+	//	timer
+	SIOCPTimerControl* m_pTimerControl;
 };
 //////////////////////////////////////////////////////////////////////////
 #endif

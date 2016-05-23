@@ -36,6 +36,11 @@ void onRecv(unsigned int _index, const char* _data, unsigned int _len)
 	//SIOCPServer::PostDisconnectEvent(&server, _index);
 }
 
+void onTimer(int _nTimerId)
+{
+	LOGINFO("timer %d active, tick %d", _nTimerId, GetTickCount());
+}
+
 int _tmain(int argc, _TCHAR* argv[])
 {
 	WSADATA wsa_data;
@@ -44,8 +49,9 @@ int _tmain(int argc, _TCHAR* argv[])
 	if(1)
 	{
 		pServer = new SIOCPServer;
+		pServer->SetEventCallback(onAccept, onDisconnect, onRecv, onTimer);
+		pServer->AddTimer(1, 1000, false);
 		pServer->StartServer("127.0.0.1", 2222, 50);
-		pServer->SetEventCallback(onAccept, onDisconnect, onRecv);
 
 		getchar();
 		pServer->Shutdown();

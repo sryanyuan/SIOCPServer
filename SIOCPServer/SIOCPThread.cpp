@@ -7,6 +7,7 @@
 //////////////////////////////////////////////////////////////////////////
 #include "SIOCPServer.h"
 #include "SIOCPConn.h"
+#include "SIOCPTimer.h"
 #include "IndexManager.h"
 #include "Logger.h"
 //////////////////////////////////////////////////////////////////////////
@@ -25,7 +26,7 @@ unsigned int SIOCPServer::__acceptThread(void* _pArg)
 			break;
 		}
 
-		if(!pServer->m_bAcceptConnection)
+		if(!pServer->m_bServerRunning)
 		{
 			LOGINFO("Accept thread received quit command");
 			break;
@@ -271,6 +272,21 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 
 			pServer->UnlockRecvEventQueue();
 		}
+		else if(dwActiveEvent == kSIOCPThreadEvent_Timer)
+		{
+			pServer->LockTimerEventQueue();
+
+			SIOCPEventQueue::iterator it = pServer->m_xTimerEventQueue.begin();
+			for(it;
+				it != pServer->m_xTimerEventQueue.end();
+				++it)
+			{
+				int nTimerId = (int)*it;
+				pServer->Callback_OnTimer(nTimerId);
+			}
+			pServer->m_xTimerEventQueue.clear();
+			pServer->UnlockTimerEventQueue();
+		}
 		else if(dwActiveEvent == kSIOCPThreadEvent_Destroy)
 		{
 			break;
@@ -278,5 +294,24 @@ unsigned int SIOCPServer::__eventThread(void* _pArg)
 	}
 
 	LOGINFO("Process thread end.");
+	return 0;
+}
+
+unsigned int SIOCPServer::__timerThread(void* _pArg)
+{
+	SIOCPServer* pServer = (SIOCPServer*)_pArg;
+
+	while(1)
+	{
+		if(!pServer->m_bServerRunning)
+		{
+			break;
+		}
+
+		pServer->m_pTimerControl->Update();
+		Sleep(5);
+	}
+
+	LOGINFO("Timer thread end.");
 	return 0;
 }

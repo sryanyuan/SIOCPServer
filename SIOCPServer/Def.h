@@ -9,5 +9,6 @@
 typedef void(*FUNC_ONACCEPT)(unsigned int);
 typedef void(*FUNC_ONDISCONNECT)(unsigned int);
 typedef void(*FUNC_ONRECV)(unsigned int, const char*, size_t);
+typedef void(*FUNC_ONTIMER)(int);
 //////////////////////////////////////////////////////////////////////////
 #endif
